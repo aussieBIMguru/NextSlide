@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>NextSlide</RootNamespace>
+    <AssemblyName>NextSlide</AssemblyName>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+
+    <!--
+      ImplicitUsings is deliberately OFF (not the VS/dotnet-new default).
+      This project turns on both UseWPF and UseWindowsForms (for the tray
+      icon's NotifyIcon), and the SDK's implicit global usings for those two
+      add overlapping namespaces (System.Windows.* and System.Windows.Forms /
+      System.Drawing) that both define types with the same short name —
+      Application, MessageBox, Color, Rectangle, etc. With ImplicitUsings
+      enabled those become ambiguous-reference compile errors project-wide.
+      Every file below has its own explicit `using` directives instead, and
+      WinForms/System.Drawing usage is kept isolated to TrayIconService.cs.
+    -->
+    <ImplicitUsings>disable</ImplicitUsings>
+
+    <Company>Gavin</Company>
+    <Product>NextSlide</Product>
+
+    <!--
+      Bakes the NS monogram (same design TrayIconService renders at
+      runtime for the tray icon — see its doc comment, which flagged this
+      exact swap as the next step once the app had real branding) into
+      the built .exe, so Explorer, the taskbar, and Alt+Tab all show it
+      too, not just the tray. ApplicationIcon needs no Build Action — the
+      compiler embeds it as a native resource directly from this path.
+    -->
+    <ApplicationIcon>Resources\app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Separately exposed as a WPF "Resource" (not just ApplicationIcon
+      above) so MainWindow.xaml/MessageForm.xaml can reference the same
+      file via a pack URI (Icon="/Resources/app.ico") for the window's
+      title-bar/Alt+Tab icon — ApplicationIcon alone only covers the
+      .exe's own file icon, not what WPF shows per-window.
+    -->
+    <None Remove="Resources\app.ico" />
+    <Resource Include="Resources\app.ico" />
+  </ItemGroup>
+
+</Project>

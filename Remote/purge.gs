@@ -1,24 +1,21 @@
 /**
- * Slide Remote — Purge Old Commands
+ * Slide Remote — Sheet purge.
  *
- * Deletes rows older than `cutoffMinutes` from the Form's response sheet,
- * so the sheet doesn't grow forever. Meant to be run on a time-driven
- * trigger (see README.md, Part 5) — not called directly.
+ * Deletes any row in the Form's response sheet whose Timestamp (column A)
+ * is older than `cutoffMinutes`. Bound to the Sheet via Extensions > Apps
+ * Script, run on a time-driven trigger (see webSetup_slideRemote.md Part 5)
+ * every 15 minutes.
  *
- * Setup:
- *   1. Open the linked Sheet, then Extensions -> Apps Script.
- *   2. Delete any placeholder code and paste in the contents of this file.
- *   3. Update SHEET_NAME below if your response tab isn't "Form Responses 1".
- *   4. Save, then add a time-driven trigger for purgeOldCommands
- *      (see README.md, Part 5, for the exact trigger settings).
+ * Kept comfortably ahead of the receiver's own ~15-second staleness
+ * window (see Receiver/README.md) — this purge is about not letting the
+ * Sheet grow forever, not about the receiver's own dedup/staleness logic,
+ * which has already discarded a row as too old to act on long before this
+ * ever runs.
  */
-
 function purgeOldCommands() {
-  const SHEET_NAME = 'Form Responses 1'; // match your actual tab name
-  const cutoffMinutes = 15;
-
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Form Responses 1'); // match your actual tab name
   const data = sheet.getDataRange().getValues();
+  const cutoffMinutes = 15;
   const now = new Date();
 
   for (let i = data.length - 1; i >= 1; i--) { // bottom-up, skip header row
