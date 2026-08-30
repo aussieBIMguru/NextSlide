@@ -46,16 +46,16 @@ Note: an earlier design pass explored Airtable instead of Google Forms/Sheets. T
 
 **Submission endpoint** (swap `/viewform` for `/formResponse` on the form's normal link):
 ```
-https://docs.google.com/forms/d/e/1FAIpQLSdtkreD1_cwoEN6_RPkKdPeK_Ymv3_JhMyUQ1H7b95YOkDK7A/formResponse
+https://docs.google.com/forms/d/e/FORMID/formResponse
 ```
 
 **Field → entry ID mapping** (from the "Get pre‑filled link" tool — reusable, doesn't change unless the form's questions are deleted and rebuilt):
 
 | Field | Entry ID |
 |---|---|
-| Command | `entry.2026834075` |
-| Slide # | `entry.2032319632` |
-| Session | `entry.1259876994` |
+| Command | `entry.####` |
+| Slide # | `entry.####` |
+| Session | `entry.####` |
 
 ---
 
