@@ -92,9 +92,3 @@ The following was the spec for the not-yet-built receiver as of this section's o
 - A **Workspace/company** Google account can block anonymous form submissions at the org level, invisibly — use a personal account for this.
 - `no-cors` POST responses are permanently unreadable by design. Don't build anything that depends on inspecting the fetch response.
 - The purge cutoff (15 min) must always stay well ahead of the receiver's poll interval, and the receiver must track by **timestamp**, never row position.
-
----
-
-## 7. Before sharing this code on git
-
-Redact `FORM_URL` and the three `entry.NNNNNNN` IDs in `../remote.html` (and this document) before committing this repository publicly — they're not secret in the sense of granting access to anything sensitive (worst case is spam submissions to the Form), but there's no reason to publish them either.
