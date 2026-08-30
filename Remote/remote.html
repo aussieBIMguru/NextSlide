@@ -1,0 +1,317 @@
+<title>Presenter Remote</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #0a0b10;
+    --bg-glow: #1a1030;
+    --surface: #14161f;
+    --surface-raised: #1a1d29;
+    --border: #262a38;
+    --border-strong: #383e54;
+    --text: #ecedf5;
+    --text-dim: #8d92a8;
+    --text-faint: #565b70;
+    --accent: #7c5cfc;
+    --accent-strong: #9d84ff;
+    --accent-soft: rgba(124, 92, 252, 0.14);
+    --accent-text: #ffffff;
+    --danger: #ff6b6b;
+    --danger-soft: rgba(255, 107, 107, 0.12);
+    --ok: #4ade80;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .stage {
+    position: relative;
+    min-height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 32px 20px;
+    overflow: hidden;
+  }
+
+  .stage::before {
+    content: "";
+    position: absolute;
+    inset: -20%;
+    background: radial-gradient(ellipse 55% 40% at 50% 15%, var(--bg-glow) 0%, transparent 65%);
+    pointer-events: none;
+  }
+
+  .panel {
+    position: relative;
+    width: 100%;
+    max-width: 380px;
+    background: linear-gradient(180deg, var(--surface-raised), var(--surface));
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 28px 24px 22px;
+    box-shadow:
+      0 30px 60px -20px rgba(0, 0, 0, 0.6),
+      inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .eyebrow .lamp {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    flex-shrink: 0;
+  }
+
+  .eyebrow .lamp.live {
+    background: var(--accent);
+    box-shadow: 0 0 8px 1px var(--accent);
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .field label {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  input[type="text"], input[type="number"] {
+    width: 100%;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.95rem;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 12px 14px;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  input::placeholder { color: var(--text-faint); }
+
+  input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  input.error {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 3px var(--danger-soft);
+  }
+
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 2px 0;
+  }
+
+  .nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  button {
+    font-family: "Manrope", ui-sans-serif, sans-serif;
+    cursor: pointer;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    transition: transform 0.08s ease, filter 0.15s ease, background 0.15s ease;
+  }
+
+  button:active { transform: translateY(1px) scale(0.99); }
+
+  .btn-nav {
+    width: 100%;
+    font-size: 1.15rem;
+    font-weight: 700;
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    letter-spacing: 0.01em;
+  }
+
+  .btn-nav .glyph {
+    font-size: 1rem;
+    opacity: 0.85;
+  }
+
+  .btn-next {
+    background: linear-gradient(180deg, var(--accent-strong), var(--accent));
+    color: var(--accent-text);
+    box-shadow: 0 10px 24px -10px rgba(124, 92, 252, 0.55);
+  }
+  .btn-next:hover { filter: brightness(1.08); }
+
+  .btn-prev {
+    background: var(--surface);
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .btn-prev:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+  .goto-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .goto-row input { flex: 1.1; }
+
+  .btn-goto {
+    flex: 1;
+    font-size: 0.85rem;
+    font-weight: 700;
+    padding: 0 14px;
+    background: var(--surface);
+    color: var(--text-dim);
+    border-color: var(--border-strong);
+    white-space: nowrap;
+  }
+  .btn-goto:hover { color: var(--text); border-color: var(--accent); }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 18px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+
+  .status .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--ok);
+    opacity: 0;
+    flex-shrink: 0;
+  }
+
+  .status.active .dot {
+    opacity: 1;
+    box-shadow: 0 0 6px 1px var(--ok);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+
+<div class="stage">
+  <div class="panel">
+    <div class="eyebrow"><span class="lamp" id="lamp"></span>Presenter Remote</div>
+
+    <div class="field">
+      <label for="session">Session</label>
+      <input id="session" type="text" placeholder="e.g. boardroom-a">
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="nav-group">
+      <button class="btn-nav btn-prev" onclick="send('Previous')"><span class="glyph">◀</span>Previous</button>
+      <button class="btn-nav btn-next" onclick="send('Next')">Next<span class="glyph">▶</span></button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="field">
+      <label for="slideNum">Jump to slide</label>
+      <div class="goto-row">
+        <input id="slideNum" type="number" min="1" placeholder="Slide #">
+        <button class="btn-goto" onclick="sendGoTo()">Go to slide</button>
+      </div>
+    </div>
+
+    <div class="status" id="statusRow"><span class="dot"></span><span id="status"></span></div>
+  </div>
+</div>
+
+<script>
+const FORM_URL = "https://docs.google.com/forms/d/e/YOUR_FORM_ID/formResponse";
+const sessionInput = document.getElementById('session');
+const slideNumInput = document.getElementById('slideNum');
+const lamp = document.getElementById('lamp');
+
+try {
+  const saved = localStorage.getItem('slideRemoteSession') || '';
+  sessionInput.value = saved;
+  if (saved) lamp.classList.add('live');
+} catch (e) {}
+
+sessionInput.addEventListener('input', () => {
+  lamp.classList.toggle('live', sessionInput.value.trim().length > 0);
+});
+
+function send(command, slideNum = "") {
+  const session = sessionInput.value.trim();
+  if (!session) {
+    sessionInput.classList.add('error');
+    sessionInput.focus();
+    return;
+  }
+  sessionInput.classList.remove('error');
+  try { localStorage.setItem('slideRemoteSession', session); } catch (e) {}
+
+  const data = new URLSearchParams();
+  data.append("entry.YOUR_COMMAND_ID", command);
+  data.append("entry.YOUR_SLIDENUM_ID", slideNum);
+  data.append("entry.YOUR_SESSION_ID", session);
+  fetch(FORM_URL, { method: "POST", mode: "no-cors", body: data });
+
+  const statusRow = document.getElementById("statusRow");
+  const status = document.getElementById("status");
+  status.textContent = "Sent " + command + (slideNum ? " → slide " + slideNum : "");
+  statusRow.classList.add('active');
+  clearTimeout(window._statusTimer);
+  window._statusTimer = setTimeout(() => {
+    status.textContent = "";
+    statusRow.classList.remove('active');
+  }, 1400);
+}
+
+function sendGoTo() {
+  const slideNum = slideNumInput.value.trim();
+  if (!slideNum) {
+    slideNumInput.classList.add('error');
+    slideNumInput.focus();
+    return;
+  }
+  slideNumInput.classList.remove('error');
+  send('Go to Slide', slideNum);
+}
+</script>
