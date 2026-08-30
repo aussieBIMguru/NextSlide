@@ -1,0 +1,16 @@
+I have handover from a tool that needs to progress a slideshow if it is in presentation mode based on the entries in a google sheet that is being driven by a form populated via an embedded html on a google site, that is public via shared link
+I need to make a system application (see attached zip with the template for it to start from), that effectively is designed to receive input/updates from the google sheet by polling it every second or so if it is connected to a powerpoint process, and check for new entries that correspond to the session Key that the app has been given
+I'm attaching the html of the remote sending component that users can use to 'drive' the powerpoint, so you can also work with the same field names/enums etc. At high level this is the fields and values:
+Timestamp, simply used for tracking time of entry, sample value: 8/30/2026 20:10:53
+Command, either Next, Previous or Go to Slide
+Slide #, with an integer if it's a Go to Slide step
+Session, a text value for the name for the receiver to watch for
+The receiver app should be called NextSlide, and it needs to be able to launch in UI mode, but switch to system tray if its closed (so its still running), and it can be reopened in UI mode from there or truly closed. It will be responsible for connecting to the specified google table, tracking new events for its Session and keeping track of things that have already passed prior (probably just using a simple hash table with timestamped hashes from the metadata given in the table, and auto disregarding anything in the list older than about a minute or so as it'll be stale by then). Ideally it will maintain a local dump to keep hashing even after closure.
+The UI should include the following controls:
+1. A text entry field to register towards watching the matching 'Session' name in the google table, which the rmeote sender will also have provided by the user driving that part to the table. Free text, with the option to lock it in, at which point the remaining UI becomes accessible, and a button to release
+2. A text entry field for the population of the google table URL to watch/poll whilst a presentation is active. Active only if a text entry from (1) is locked in, and it in turn then unlocks the final field. If (1) is released, (2) still holds its value.
+3. A combobox of all active Powerpoint process' that can be nominated to 'hook' the Session commands from the sheet up to. It is driven to next/previous or specified slide dependign on the Command. As events match the Session and fire, that presentation if it's in presentation mode will respond to those calls as they show up and are hashed away after so they don't refire
+4. A datagridview with a summary of the actions as they land, with latest being at the top. It captures if the event fired successfully, and only has to report/yield new entries since the app was launched
+The outcome should be a simple app that is able to connect to the google sheet via its URL, check for changes and use them to drive the presentation the user hooks it up to.
+Please consult the handover from the sender app, as well as the zipped project and its own system instructions. Ask me any questions before proceeding further if needed.
+
