@@ -37,11 +37,15 @@ public sealed class CommandDedupeStore
     /// <param name="maxAge">
     /// How old a row can be (relative to the newest row timestamp seen in
     /// a poll — see <see cref="Prune"/>) before it's pruned from this
-    /// store and treated as too stale to act on. Defaults to 15 seconds.
+    /// store and treated as too stale to act on. Defaults to 10 seconds —
+    /// narrowed from an earlier 15s per Gavin's feedback that a backlog of
+    /// commands built up while the app was busy opening/reconnecting could
+    /// still be old enough to fire in a rapid-fire burst; 10s trims that
+    /// window without cutting into a normal single command's round trip.
     /// </param>
     public CommandDedupeStore(TimeSpan? maxAge = null)
     {
-        _maxAge = maxAge ?? TimeSpan.FromSeconds(15);
+        _maxAge = maxAge ?? TimeSpan.FromSeconds(10);
     }
 
     /// <summary>

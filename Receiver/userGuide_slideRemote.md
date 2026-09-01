@@ -15,7 +15,7 @@ either half was *built*, see `../Remote/webSetup_slideRemote.md` /
 Your phone (or any browser)              This PC
 ┌───────────────────────┐                ┌─────────────────────────┐
 │  Sender page           │   writes a     │  NextSlide (tray/window) │
-│  (Google Site)          │   row per   │  polls the Sheet ~1×/sec  │
+│  (Google Site)          │   row per   │  polls the Sheet ~2×/sec  │
 │  ◀ Previous  Next ▶      ──tap──▶ Google │  for rows matching its   │
 │  Go to Slide [__]       │   Sheet    │  Session, then drives      │
 │  Session: [boardroom-a]│                │  PowerPoint accordingly  │
@@ -74,15 +74,17 @@ Do this in order — each step unlocks the next.
 2. Launch NextSlide (or bring it up from the tray if it's already
    running).
 3. Type a **Session** name — anything, as long as it matches what you'll
-   type on the phone in a moment (e.g. `boardroom-a`). Click **Lock**.
-4. Paste the **Google Sheet URL** (the sheet the Form writes to — ask
-   whoever set up the sender side for the link, or grab it from the
-   sheet's own address bar). It just needs to be shared "Anyone with the
-   link can view".
-5. In **Hook to PowerPoint**, pick your deck from the dropdown. If it's
+   type on the phone in a moment (e.g. `boardroom-a`) — and paste the
+   **Google Sheet URL** (the sheet the Form writes to — ask whoever set
+   up the sender side for the link, or grab it from the sheet's own
+   address bar; it just needs to be shared "Anyone with the link can
+   view"). Both fields fill in from last time automatically. Click
+   **Lock** once both look right — it only enables once the Session name
+   is filled in and the URL looks like a real Sheets link.
+4. In **Hook to PowerPoint**, pick your deck from the dropdown. If it's
    not listed, click **Refresh** (it only lists decks that are open —
    it doesn't need to be in Slide Show mode yet to appear, just open).
-6. Start the slide show in PowerPoint itself (**F5**, or **Slide Show →
+5. Start the slide show in PowerPoint itself (**F5**, or **Slide Show →
    From Beginning**). NextSlide only actually drives a deck once
    PowerPoint says it's presenting — locking it in ahead of time is fine.
 
@@ -124,6 +126,7 @@ what the common ones mean).
 | NextSlide's log shows red "Not currently in Slide Show mode" | Normal if you click the remote before pressing F5 in PowerPoint, or after leaving the show with Esc — nothing's broken, the click just arrived while nothing was presenting. Start (or resume) the Slide Show and try again. |
 | A click on the phone shows "Sent" but nothing happens | That's expected and not an error — the sender can't confirm delivery (see `../Remote/ai/handover_slideRemote.md` §4), so "Sent" just means the tap registered locally. Check NextSlide's log for what actually happened. |
 | Everything worked, then suddenly stopped after several minutes idle | The Sheet auto-purges rows older than 15 minutes — this doesn't affect *new* clicks, only very old unactioned rows, so this is very unlikely to be the cause; more likely check the PC's network connection. |
+| Closed PowerPoint (or the deck) without clicking Release first | NextSlide notices and recovers on its own — no crash, and you don't need to re-lock. The status bar and log explain PowerPoint's gone, and the presentation dropdown clears. Reopen PowerPoint/the deck, click **Refresh**, and pick it again. |
 
 For anything not covered here, `README.md`'s own Troubleshooting table
 covers NextSlide-specific errors in more depth, and

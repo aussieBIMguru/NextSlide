@@ -1,6 +1,6 @@
 # Slide Remote — Receiver (NextSlide) Handoff
 
-**Status:** Built, delivered as a Visual Studio solution, three rounds of real-run feedback already incorporated, and now polished with an app icon and full documentation (2026-08-30). Companion to `../../Remote/ai/handover_slideRemote.md` (the sender side, which *is* fully tested end-to-end) and `../../Remote/webSetup_slideRemote.md`. For the developer-facing build/structure doc see `../README.md`; for the end-user, both-apps-together operating guide see `../userGuide_slideRemote.md`. Your own original brief for this project should live alongside this file in `Receiver/ai/`.
+**Status:** Built, delivered as a Visual Studio solution, six rounds of real-run feedback already incorporated — including a round 6 crash fix (PowerPoint closing mid-session), a merged Session+Sheet lock step, a faster poll, and a narrower staleness window (2026-09-01). Companion to `../../Remote/ai/handover_slideRemote.md` (the sender side, which *is* fully tested end-to-end) and `../../Remote/webSetup_slideRemote.md`. For the developer-facing build/structure doc see `../README.md`; for the end-user, both-apps-together operating guide see `../userGuide_slideRemote.md`. Your own original brief for this project should live alongside this file in `Receiver/ai/`.
 
 ---
 
@@ -54,16 +54,17 @@ Lives in this repository as `Receiver/src/` (`NextSlide.sln` + `NextSlide/` proj
   staleness window below — so it comes back in as stale rather than
   refired, and stale rows are dropped silently, never logged.
 
-- **Staleness window: ~15 seconds** (was 60s in round 1 — narrowed per
-  Gavin's feedback), measured against the newest row timestamp seen in a
-  poll, never against the receiver PC's own clock. The Sheet's Timestamp
-  column is written in the *spreadsheet's* configured timezone, which
-  generally won't match the receiver's local timezone — comparing
-  against `DateTime.Now` directly would silently mis-age every row by
-  that constant offset. Anchoring to the newest timestamp actually
-  present cancels the offset out; only relative deltas between rows
-  matter. `CommandDedupeStore`'s constructor takes the window as an
-  optional `TimeSpan?` if a future need wants it configurable.
+- **Staleness window: ~10 seconds** (60s in round 1, narrowed to 15s in
+  round 3, narrowed again to 10s in round 6 — see below), measured
+  against the newest row timestamp seen in a poll, never against the
+  receiver PC's own clock. The Sheet's Timestamp column is written in the
+  *spreadsheet's* configured timezone, which generally won't match the
+  receiver's local timezone — comparing against `DateTime.Now` directly
+  would silently mis-age every row by that constant offset. Anchoring to
+  the newest timestamp actually present cancels the offset out; only
+  relative deltas between rows matter. `CommandDedupeStore`'s constructor
+  takes the window as an optional `TimeSpan?` if a future need wants it
+  configurable.
 
 - **The command log only ever shows rows an action was actually
   attempted on** (Fired or Failed) — stale/backlog rows are claimed (so
@@ -71,15 +72,23 @@ Lives in this repository as `Receiver/src/` (`NextSlide.sln` + `NextSlide/` proj
   never reach the grid. `CommandOutcome.Skipped` was removed entirely
   rather than kept-but-hidden, since nothing constructs it anymore.
 
-- **UI state machine**: Session (free text) → Lock → Sheet URL (unlocked)
-  → valid URL → PowerPoint picker (unlocked) → pick a presentation →
-  polling starts. Release stops polling and clears the presentation list
-  but deliberately keeps the Sheet URL value, per the spec ("If (1) is
-  released, (2) still holds its value"). Last-used Session/Sheet URL are
-  persisted and pre-filled on next launch, but never auto-locked — polling
-  only ever starts from an explicit user action. Locking also does an
-  eager settings save (so the Session name survives even if the app is
-  killed before a clean exit) — see §4 round 2 for a bug this surfaced.
+- **UI state machine (as of round 6)**: Session name + Sheet URL (both
+  free text together) → Lock (only enabled once both are valid) → both
+  commit at once and become read-only → PowerPoint picker (unlocked) →
+  pick a presentation → polling starts. Release stops polling, clears the
+  presentation list, and unlocks both Session name and Sheet URL again —
+  deliberately keeping both values in place so re-locking doesn't require
+  retyping either. (Rounds 1–5 locked Session and Sheet URL sequentially,
+  one field unlocking the next; round 6 merged them into one combined
+  step per Gavin's feedback — see §4 round 6.) Last-used Session/Sheet URL
+  are persisted and pre-filled on next launch, but never auto-locked —
+  polling only ever starts from an explicit user action. Locking also
+  does an eager settings save of both fields (so they survive even if the
+  app is killed before a clean exit) — see §4 round 2 for a bug this
+  surfaced. `SlidePollingService.PresentationUnavailable` (new in round 6)
+  drops the flow back to "pick a presentation" — without unlocking
+  Session/Sheet — whenever PowerPoint or the target presentation vanishes
+  mid-session; see §4 round 6.
 
 - **Read-only against the Sheet** — no "Done" status written back,
   matching the deliberate scope boundary in `../../Remote/ai/handover_slideRemote.md` §5.6
@@ -105,9 +114,23 @@ Lives in this repository as `Receiver/src/` (`NextSlide.sln` + `NextSlide/` proj
 Defaults to `WindowedTrayOnClose` (template default is
 `WindowedExitOnClose`; changed for NextSlide since the whole point is to
 keep polling after the window is closed). Polling runs on a
-`DispatcherTimer` (~1s) tied to the WPF UI thread — required because COM
-calls into PowerPoint must happen on that STA thread — and is unaffected
-by the window being hidden to tray.
+`DispatcherTimer` (~0.5s as of round 6, was ~1s in rounds 1–5) tied to the
+WPF UI thread — required because COM calls into PowerPoint must happen on
+that STA thread — and is unaffected by the window being hidden to tray.
+
+- **COM failures never escape as exceptions (round 6).** Every
+  `PowerPointController` call site that touches PowerPoint's COM object
+  model catches broadly — `COMException` plus the handful of other
+  exception types the CLR maps well-known HRESULTs to (`ArgumentException`,
+  `NullReferenceException`, `InvalidComObjectException`, etc. — see
+  `PowerPointController.IsComInteropFailure`'s doc comment) — rather than
+  `catch (COMException)` alone. This matters specifically because
+  `SlidePollingService.OnTick` is `async void` (the only option for a
+  `DispatcherTimer.Tick` handler): any exception that escapes it has no
+  caller left to observe it and crashes the whole app, not just that poll.
+  `SlidePollingService` also wraps its `TryExecuteCommand` call site in its
+  own try/catch as a second line of defense. See §4 round 6 for the crash
+  this fixes.
 
 ## 4. Build/run feedback log
 
@@ -188,16 +211,67 @@ member names/casing beyond what's documented (`Presentations`, `Name`,
 believed correct and, as of round 3, confirmed working in Gavin's real
 run.
 
+**Round 6 — fixed a real crash, plus three tuning/UX requests, from
+real-run feedback after round 5.** Gavin reported: closing PowerPoint
+mid-session (without clicking Release first) threw and crashed the app;
+the app "chews up" commands when opening/reconnecting because the
+staleness window was too generous; and asked for the Session/Sheet URL
+hookup to be simplified so the two lock in together as a validated pair,
+with a faster poll. Changes:
+
+1. **Crash fix.** `PowerPointController`'s COM call sites previously
+   caught only `COMException`; a disconnected RCW or a well-known HRESULT
+   the CLR maps to a different exception type (`NullReferenceException`,
+   `ArgumentException`, etc.) could still escape. Since
+   `SlidePollingService.OnTick` is `async void`, anything escaping it
+   crashes the whole app, not just that tick — matching the reported
+   symptom exactly. Broadened every catch to cover that wider set (see
+   `IsComInteropFailure`), added a `presentationUnavailable` out-parameter
+   to `TryExecuteCommand` so callers know *why* it failed (target gone vs.
+   not presenting vs. rejected), and added a second, outer try/catch
+   around the `TryExecuteCommand` call in `SlidePollingService` as a
+   deliberate belt-and-suspenders layer. On top of just not crashing, a
+   new `PresentationUnavailable` event lets `MainViewModel` recover
+   gracefully — clears the picked presentation (stopping polling as a
+   side effect) and re-scans, without unlocking Session/Sheet — instead of
+   silently re-attempting (and re-logging Failed for) the same dead
+   target every 0.5s forever.
+2. **UI restructure.** Merged the Session name and Sheet URL fields into
+   one combined lock step (`GroupBox` "1 · Session & Sheet") — Lock now
+   validates both together (non-empty Session, parseable Sheet URL)
+   rather than sequentially unlocking one after the other. `IsHookupEditable`
+   replaces the old `IsSessionNameEditable`/`IsSheetUrlEditable` pair.
+   Release still keeps both values in place, now explicitly for both
+   fields rather than just the Sheet URL.
+3. **Staleness window narrowed 15s → 10s** (`CommandDedupeStore`) — per
+   Gavin's "chews up commands when opening" report: a backlog picked up
+   right when hooking up (or reconnecting) could still be within the old
+   15s window and fire in a rapid-fire burst instead of being silently
+   dropped as stale. 10s trims that without cutting into a normal single
+   command's round trip.
+4. **Poll interval halved 1s → 0.5s** (`SlidePollingService`) — Gavin
+   confirmed this isn't too frequent for the Sheet's gviz endpoint or the
+   reentrancy-guarded tick loop.
+
+All doc cross-references (this file, `../README.md`, `../userGuide_slideRemote.md`)
+updated to match — new 2-step flow, 0.5s poll, 10s staleness, and the new
+"PowerPoint closed mid-session" recovery path documented as expected
+behavior rather than left implicit.
+
 ## 5. Possible follow-ups (not built)
 
 - Auto-refresh of the presentation combobox while hooked up (currently
   manual Refresh + once automatically on Lock, to avoid two independent
-  loops touching COM concurrently).
+  loops touching COM concurrently). Round 6's `PresentationUnavailable`
+  handling covers the "target disappeared" case specifically, but the
+  combobox still won't notice a *new* presentation being opened without a
+  manual Refresh.
 - `First`/`Last` commands — mentioned as optional in
   `../../Remote/ai/handover_slideRemote.md` §5.4 but the sender never
   actually sends them; not implemented.
-- Configurable poll interval (currently a hardcoded ~1s, though
-  `SlidePollingService`'s constructor already accepts an override).
-- Configurable staleness window (currently a hardcoded 15s default,
-  though `CommandDedupeStore`'s constructor already accepts an override)
-  — could be exposed in the UI/settings if Gavin wants to tune it later.
+- Configurable poll interval (currently a hardcoded ~0.5s as of round 6,
+  though `SlidePollingService`'s constructor already accepts an override).
+- Configurable staleness window (currently a hardcoded 10s default as of
+  round 6, though `CommandDedupeStore`'s constructor already accepts an
+  override) — could be exposed in the UI/settings if Gavin wants to tune
+  it later.

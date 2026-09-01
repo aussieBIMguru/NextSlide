@@ -24,7 +24,7 @@ public sealed class SlideCommandProcessedEventArgs : EventArgs
 }
 
 /// <summary>
-/// Owns the ~1s poll loop: fetch the sheet, filter to our Session, dedupe,
+/// Owns the ~0.5s poll loop: fetch the sheet, filter to our Session, dedupe,
 /// and drive PowerPoint for whatever's new — see the project's handover
 /// doc §5 for the design this implements end to end.
 ///
@@ -37,6 +37,15 @@ public sealed class SlideCommandProcessedEventArgs : EventArgs
 /// without ConfigureAwait(false) for the same reason WorkSimulationService
 /// in the base template doesn't: the continuation needs to come back to
 /// this thread to safely touch PowerPoint's COM objects.
+///
+/// <see cref="OnTick"/> is <c>async void</c> (the only option for a
+/// DispatcherTimer.Tick handler), which means any exception that escapes it
+/// doesn't just fail this poll — it crashes the entire application, since
+/// there's no caller left to observe it. <see cref="PowerPointController"/>
+/// is written to never let a "PowerPoint closed" failure escape as an
+/// exception, but the try/catch around its call below is a deliberate
+/// second line of defense against that specific failure mode, not just
+/// tidiness.
 /// </summary>
 public sealed class SlidePollingService : IDisposable
 {
@@ -48,6 +57,17 @@ public sealed class SlidePollingService : IDisposable
 
     public event EventHandler<SlideCommandProcessedEventArgs>? CommandProcessed;
     public event EventHandler<string>? PollError;
+
+    /// <summary>
+    /// Raised the moment a command attempt discovers the target
+    /// presentation is gone — PowerPoint closed, or that specific
+    /// presentation was closed — rather than just "not presenting right
+    /// now" or "rejected". MainViewModel uses this to stop polling and drop
+    /// back to the presentation picker instead of silently re-attempting
+    /// (and re-logging a Failed row for) the same dead target on every
+    /// subsequent tick.
+    /// </summary>
+    public event EventHandler? PresentationUnavailable;
 
     /// <summary>Session name to filter sheet rows to. Set before <see cref="Start"/>.</summary>
     public string? Session { get; set; }
@@ -61,7 +81,7 @@ public sealed class SlidePollingService : IDisposable
     public SlidePollingService(CommandDedupeStore dedupeStore, TimeSpan? interval = null)
     {
         _dedupeStore = dedupeStore;
-        _timer = new DispatcherTimer { Interval = interval ?? TimeSpan.FromSeconds(1) };
+        _timer = new DispatcherTimer { Interval = interval ?? TimeSpan.FromSeconds(0.5) };
         _timer.Tick += OnTick;
     }
 
@@ -146,9 +166,39 @@ public sealed class SlidePollingService : IDisposable
                     continue;
                 }
 
-                var fired = _powerPoint.TryExecuteCommand(targetPresentationName, command, row.SlideNumber, out var detail);
+                bool fired;
+                string detail;
+                bool presentationUnavailable;
+                try
+                {
+                    fired = _powerPoint.TryExecuteCommand(
+                        targetPresentationName, command, row.SlideNumber, out detail, out presentationUnavailable);
+                }
+                catch (Exception ex)
+                {
+                    // Should be unreachable — PowerPointController is meant
+                    // to convert every COM failure into a false/detail
+                    // return — but this is an async void tick, so treat any
+                    // surprise the same way rather than letting it crash
+                    // the app (see this class's doc comment).
+                    fired = false;
+                    detail = $"Unexpected error talking to PowerPoint: {ex.Message}";
+                    presentationUnavailable = true;
+                }
+
                 CommandProcessed?.Invoke(this, new SlideCommandProcessedEventArgs(
                     row, fired ? CommandOutcome.Fired : CommandOutcome.Failed, detail));
+
+                if (presentationUnavailable)
+                {
+                    // PowerPoint (or this specific presentation) is gone —
+                    // no point trying the rest of this batch against the
+                    // same dead target. MainViewModel drops back to the
+                    // picker in response; polling itself stops as a side
+                    // effect of that (see MainViewModel.OnPresentationUnavailable).
+                    PresentationUnavailable?.Invoke(this, EventArgs.Empty);
+                    break;
+                }
             }
         }
         finally

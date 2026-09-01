@@ -34,45 +34,59 @@ Form side was built, see `../Remote/webSetup_slideRemote.md` and
 
 ## How it works
 
-Three-step hookup, matching the panel across the top of the window:
+Two-step hookup, matching the panel across the top of the window:
 
-1. **Session** — type the same Session name the remote sender uses, click
-   **Lock**. Free text until locked; **Release** unlocks it again (and
-   stops polling) without clearing the Sheet URL or presentation choice.
-2. **Google Sheet URL** — only editable once Session is locked. Paste the
-   sheet's normal share/edit link (any form works — the ID and, if
-   present, the tab's `gid` are extracted from it). The sheet must be
-   shared **"Anyone with the link can view"** — NextSlide reads it via the
-   unauthenticated `gviz` query endpoint, no OAuth/service account.
-3. **Hook to PowerPoint** — only enabled once the Sheet URL looks valid.
-   Lists every presentation currently open in PowerPoint (via COM),
-   flagging which one is actually in Slide Show mode. Pick one; polling
-   starts automatically as soon as all three steps are satisfied, and
-   stops the moment any of them stops being true.
+1. **Session & Sheet** — type the same Session name the remote sender
+   uses *and* paste the Sheet URL, then click **Lock**. Both fields are
+   free text together and validated together — Lock only enables once
+   the Session name is non-empty and the Sheet URL looks like a real
+   Google Sheets link. Locking commits both at once (and pre-fills them
+   from last run, though it never auto-locks). **Release** unlocks both
+   fields again (and stops polling) without clearing either value.
+2. **Hook to PowerPoint** — only enabled once locked. Lists every
+   presentation currently open in PowerPoint (via COM), flagging which
+   one is actually in Slide Show mode. Pick one; polling starts
+   automatically, and stops the moment the session is released or the
+   presentation stops being available (see "Recovering from PowerPoint
+   closing" below).
 
-Once running (~1 poll/second): fetch the sheet → filter rows to the locked
-Session → skip anything already processed or too old to act on → drive
-the picked presentation if (and only if) it's actually in Slide Show
-mode. Only rows an action was actually attempted on reach the log —
-green = fired, red = failed, with a Detail column explaining any
-failure. Rows older than the staleness window (see below) are claimed
-silently and never shown, so hooking up mid-session onto a sheet that
-still has old, not-yet-purged rows in it doesn't flood the grid.
+Once running (~2 polls/second, i.e. every ~0.5s): fetch the sheet →
+filter rows to the locked Session → skip anything already processed or
+too old to act on → drive the picked presentation if (and only if) it's
+actually in Slide Show mode. Only rows an action was actually attempted
+on reach the log — green = fired, red = failed, with a Detail column
+explaining any failure. Rows older than the staleness window (see below)
+are claimed silently and never shown, so hooking up mid-session onto a
+sheet that still has old, not-yet-purged rows in it doesn't flood the
+grid.
+
+**Recovering from PowerPoint closing mid-session:** every COM call into
+PowerPoint is guarded (`PowerPointController`, see its class doc comment)
+so a closed PowerPoint app, or just the specific presentation being
+closed, can never throw its way out and crash NextSlide — it always comes
+back as a normal failed-command result instead. The first time a poll
+tick discovers the target is gone, `SlidePollingService` raises
+`PresentationUnavailable`; `MainViewModel` responds by clearing the
+picked presentation (which stops polling) and re-scanning, *without*
+unlocking the Session/Sheet step — so reopening PowerPoint (or the same
+deck) and clicking **Refresh** is all it takes to pick back up, no
+re-typing the Session/Sheet URL.
 
 **Dedup / "already seen" tracking** (`Services/CommandDedupeStore.cs`):
 purely in-memory for the lifetime of the running app — rows are hashed
 (SHA-256 over Timestamp+Command+Slide#+Session) into a table that's
 never written to disk, so nothing accumulates across restarts or
-sessions. Entries older than ~15 seconds are pruned automatically —
+sessions. Entries older than ~10 seconds are pruned automatically —
 measured against the *newest row timestamp seen in that poll*, not this
 PC's clock, since the Sheet's Timestamp column is in the spreadsheet's
 own configured timezone and generally won't match the receiver's local
-timezone. That same 15-second window is also what "too old to act on"
-means above; an earlier build persisted this table to disk and used a
-60-second window, but that let entries pile up indefinitely across test
-sessions — a restart doesn't need to survive this table, since anything
-it would have protected against re-firing is, by definition, already
-older than the window by the time polling resumes.
+timezone. That same 10-second window is also what "too old to act on"
+means above; an earlier build used 15s (and, before that, a disk-persisted
+60-second window), narrowed further so a backlog picked up while the app
+was busy opening/reconnecting can't still be fresh enough to fire in a
+rapid-fire burst — a restart doesn't need to survive this table, since
+anything it would have protected against re-firing is, by definition,
+already older than the window by the time polling resumes.
 
 **PowerPoint automation** (`Services/PowerPointController.cs`): late-bound
 COM via `dynamic`, not a typed Primary Interop Assembly — no COM/PIA
@@ -83,7 +97,11 @@ oleaut32's `GetActiveObject` (resolving the "PowerPoint.Application"
 ProgID to a CLSID first through ole32's `CLSIDFromProgID`), not
 `System.Runtime.InteropServices.Marshal.GetActiveObject` — that
 convenience wrapper only ever existed in .NET Framework and isn't present
-in modern .NET's `Marshal` class.
+in modern .NET's `Marshal` class. Every call site catches broadly
+(`COMException` plus the handful of other exception types the CLR maps
+well-known HRESULTs to — see `PowerPointController.IsComInteropFailure`)
+rather than just `COMException`, specifically so an external process
+disappearing mid-call can never crash the app.
 
 ## Project structure
 
@@ -115,7 +133,7 @@ src/
       GoogleSheetReader.cs        Sheet URL parsing + gviz fetch/parse
       CommandDedupeStore.cs       In-memory hash table + staleness pruning (no disk persistence)
       PowerPointController.cs     COM automation (list presentations, fire commands)
-      SlidePollingService.cs      The ~1s DispatcherTimer loop tying the above together
+      SlidePollingService.cs      The ~0.5s DispatcherTimer loop tying the above together
       SettingsService.cs          Load/save AppSettings as JSON under %LOCALAPPDATA%
       TrayIconService.cs          NotifyIcon wrapper, all run modes go through this
     Mvvm/
@@ -177,9 +195,11 @@ Startup-folder shortcut).
 - **Read-only against the Sheet.** By design (see
   `../Remote/ai/handover_slideRemote.md` §5.6) — no "Done" status is ever
   written back, so no Sheets API write credentials are needed.
-- **Polling interval is fixed at 1 second** (`SlidePollingService`'s
+- **Polling interval is fixed at 0.5 second** (`SlidePollingService`'s
   constructor takes an optional interval if a derived need ever wants it
-  configurable).
+  configurable; 0.5s was chosen as responsive without being so frequent
+  it risks overlapping fetches on a slow connection — the reentrancy
+  guard in `OnTick` handles that case regardless).
 - **The presentation list doesn't auto-refresh** while hooked up — click
   Refresh if you open/close presentations after locking in. The Sheet
   poll loop and the presentation list intentionally don't run on two
@@ -193,7 +213,8 @@ Startup-folder shortcut).
 | Picked a presentation but nothing fires | It needs to actually be in Slide Show mode (F5 in PowerPoint), not just open — check the combobox's "(presenting)"/"(not presenting)" suffix. |
 | Every row shows Failed, "PowerPoint rejected the command" | Usually a `Go to Slide` number beyond the deck's slide count. |
 | Status bar shows a sheet/network error | Confirm the pasted URL is the sheet's real link and it's shared "Anyone with the link can view" — see `../Remote/ai/handover_slideRemote.md` §6 for the same gotchas on the sender side (unpublished Form, Workspace account restrictions, etc. don't apply here, but sheet sharing does). |
-| A command from more than ~15 seconds ago never fires and never shows up in the log | Expected: hooking up (or restarting) picks up whatever's still in the sheet (not yet purged) but won't replay a backlog of old clicks — those rows are claimed and dropped silently rather than logged. |
+| A command from more than ~10 seconds ago never fires and never shows up in the log | Expected: hooking up (or restarting) picks up whatever's still in the sheet (not yet purged) but won't replay a backlog of old clicks — those rows are claimed and dropped silently rather than logged. |
+| PowerPoint (or the deck) was closed while NextSlide was still hooked up | Expected, and no longer a crash — the log shows one red row explaining PowerPoint's gone, the picker clears back to unselected, and the Session/Sheet lock stays in place. Reopen PowerPoint (and/or the deck), click **Refresh**, and pick it again. |
 
 ## Extending the template
 
@@ -230,3 +251,15 @@ without a comment explaining why.
   solution, `ai/` for handover docs) and `Remote/` (the sender, with its
   own `ai/` folder), each with this same README/userGuide split. Only
   doc paths changed.
+- **2026-09-01** — Fixed a crash when PowerPoint (or the driven
+  presentation) was closed while still hooked up: `PowerPointController`
+  now catches broadly at every COM call site instead of just
+  `COMException`, and `SlidePollingService`/`MainViewModel` recover
+  gracefully (clear the picker, re-scan, stay locked) via a new
+  `PresentationUnavailable` event rather than repeating the failure every
+  tick. Merged the Session and Sheet URL steps into one combined
+  lock — both are now validated and locked together instead of
+  sequentially — so the hookup panel is a two-step flow, not three.
+  Narrowed the dedupe staleness window from 15s to 10s (so a backlog
+  picked up while reconnecting can't fire as a rapid-fire burst) and
+  sped up polling from 1s to 0.5s.

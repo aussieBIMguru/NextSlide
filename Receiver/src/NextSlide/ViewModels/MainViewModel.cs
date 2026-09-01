@@ -8,19 +8,26 @@ using NextSlide.Services;
 namespace NextSlide.ViewModels;
 
 /// <summary>
-/// Backs MainWindow. Owns the Session lock/release flow, the Sheet URL,
-/// the PowerPoint presentation picker, the command log, and the
+/// Backs MainWindow. Owns the Session/Sheet lock/release flow, the
+/// PowerPoint presentation picker, the command log, and the
 /// SlidePollingService that ties them together — see the project's
 /// handover doc §5 for the receiver design this implements.
 ///
-/// State machine: SessionName is free-text until <see cref="LockSessionCommand"/>
-/// locks it (see <see cref="IsSessionLocked"/>), which unlocks SheetUrl for
-/// editing; a usable SheetUrl in turn unlocks the presentation picker (see
-/// <see cref="IsPresentationPickerEnabled"/>). Polling only ever runs while
-/// all three are satisfied — <see cref="UpdatePollingTargetsAndState"/> is
-/// the single place that starts/stops it. Releasing the session stops
-/// polling and clears the presentation list, but deliberately leaves
-/// SheetUrl's value in place so re-locking doesn't require retyping it.
+/// State machine: SessionName and SheetUrl are both free-text together
+/// until <see cref="LockSessionCommand"/> locks them as one step (see
+/// <see cref="IsSessionLocked"/> / <see cref="IsHookupEditable"/>) — Lock
+/// only becomes available once both a non-empty Session name and a usable
+/// SheetUrl are present, so the two are validated and committed together
+/// rather than sequentially. Locking unlocks the presentation picker (see
+/// <see cref="IsPresentationPickerEnabled"/>); polling only ever runs while
+/// a presentation is selected on top of that — <see cref="UpdatePollingTargetsAndState"/>
+/// is the single place that starts/stops it. Releasing stops polling and
+/// clears the presentation list, but deliberately leaves both SessionName
+/// and SheetUrl in place (editable again) so re-locking doesn't require
+/// retyping them. <see cref="OnPresentationUnavailable"/> drops back to an
+/// unselected presentation (without unlocking) whenever PowerPoint or the
+/// target presentation disappears mid-session — see SlidePollingService's
+/// PresentationUnavailable doc comment.
 /// </summary>
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
@@ -35,7 +42,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _sheetUrl;
     private ObservableCollection<PresentationOption> _availablePresentations = new();
     private PresentationOption? _selectedPresentation;
-    private string _statusMessage = "Enter a Session name and click Lock to begin.";
+    private string _statusMessage = "Enter a Session name and Sheet URL, then click Lock to begin.";
     private bool _isPolling;
 
     public MainViewModel(AppSettings settings, SettingsService settingsService)
@@ -57,10 +64,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _pollingService = new SlidePollingService(_dedupeStore);
         _pollingService.CommandProcessed += OnCommandProcessed;
         _pollingService.PollError += OnPollError;
+        _pollingService.PresentationUnavailable += OnPresentationUnavailable;
 
         CommandLog = new ObservableCollection<CommandLogItemViewModel>();
 
-        LockSessionCommand = new RelayCommand(LockSession, () => !IsSessionLocked && !string.IsNullOrWhiteSpace(SessionName));
+        LockSessionCommand = new RelayCommand(LockSession,
+            () => !IsSessionLocked && !string.IsNullOrWhiteSpace(SessionName) && IsSheetUrlUsable);
         ReleaseSessionCommand = new RelayCommand(ReleaseSession, () => IsSessionLocked);
         RefreshPresentationsCommand = new RelayCommand(RefreshPresentations, () => IsSessionLocked);
         ClearLogCommand = new RelayCommand(() => CommandLog.Clear());
@@ -94,17 +103,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             LockSessionCommand.RaiseCanExecuteChanged();
             ReleaseSessionCommand.RaiseCanExecuteChanged();
             RefreshPresentationsCommand.RaiseCanExecuteChanged();
-            OnPropertyChanged(nameof(IsSessionNameEditable));
-            OnPropertyChanged(nameof(IsSheetUrlEditable));
+            OnPropertyChanged(nameof(IsHookupEditable));
             OnPropertyChanged(nameof(IsPresentationPickerEnabled));
         }
     }
 
-    /// <summary>SessionName's TextBox binds IsEnabled here — free-text only until locked, per the UI spec.</summary>
-    public bool IsSessionNameEditable => !IsSessionLocked;
-
-    /// <summary>SheetUrl's TextBox binds IsEnabled here — editable only once the session is locked.</summary>
-    public bool IsSheetUrlEditable => IsSessionLocked;
+    /// <summary>Both SessionName's and SheetUrl's TextBoxes bind IsEnabled here — free-text together until Lock, read-only together once locked.</summary>
+    public bool IsHookupEditable => !IsSessionLocked;
 
     public string SheetUrl
     {
@@ -116,6 +121,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             OnPropertyChanged(nameof(IsSheetUrlUsable));
             OnPropertyChanged(nameof(IsPresentationPickerEnabled));
+            LockSessionCommand.RaiseCanExecuteChanged();
             UpdatePollingTargetsAndState();
         }
     }
@@ -167,10 +173,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         IsSessionLocked = true;
 
+        // Both committed eagerly and together — locking is the one
+        // explicit action that validates both fields at once, so both get
+        // persisted here rather than SheetUrl waiting until a presentation
+        // is also picked (see UpdatePollingTargetsAndState, which used to
+        // be the only place LastSheetUrl was saved).
         _settings.LastSessionName = SessionName.Trim();
+        _settings.LastSheetUrl = SheetUrl.Trim();
         _settingsService.Save(_settings);
 
-        StatusMessage = $"Session '{SessionName.Trim()}' locked. Paste the sheet URL to continue.";
+        StatusMessage = $"Session '{SessionName.Trim()}' locked. Pick a presentation to continue.";
         RefreshPresentations();
     }
 
@@ -181,7 +193,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         IsSessionLocked = false;
         AvailablePresentations = new ObservableCollection<PresentationOption>();
         SelectedPresentation = null;
-        StatusMessage = "Released — sheet URL kept. Lock the session again to resume.";
+        StatusMessage = "Released — session and sheet URL kept. Lock again to resume.";
+    }
+
+    /// <summary>
+    /// Fired when SlidePollingService discovers, mid-poll, that the target
+    /// presentation is gone (PowerPoint closed, or just that presentation
+    /// closed) — the case that used to be able to crash the app before a
+    /// command attempt was left unguarded. Drops back to an unselected
+    /// presentation (stopping polling as a side effect, via
+    /// UpdatePollingTargetsAndState) without unlocking the session, then
+    /// re-scans so the picker reflects reality — either PowerPoint's fully
+    /// gone (empty list, explanatory status) or another open presentation
+    /// is available to pick straight away.
+    /// </summary>
+    private void OnPresentationUnavailable(object? sender, EventArgs e)
+    {
+        SelectedPresentation = null;
+        RefreshPresentations();
     }
 
     /// <summary>
@@ -271,6 +300,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         _pollingService.CommandProcessed -= OnCommandProcessed;
         _pollingService.PollError -= OnPollError;
+        _pollingService.PresentationUnavailable -= OnPresentationUnavailable;
         _pollingService.Dispose();
     }
 }
